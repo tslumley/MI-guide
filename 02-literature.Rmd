@@ -1,3 +1,34 @@
-# Literature
+# Available implementations of multiple imputation {#methods}
 
-Here is a review of existing methods.
+We evaluated the following imputation software
+
+- `mi`, an R package using Bayesian generalised linear models [@mi]
+- `mice`, standing for *multiple imputation with chained equations*, available in R and Stata [@mice]
+- `missForest` [@missForest] and `missRanger` [@missRanger], two R packages using random forests for imputation  
+- `MIDAS`, a Python program using two forms of deep neural network (variation autoencode and denoising autoencoder), which was in pre-alpha development [@MIDAS]
+
+## Computational scalability
+
+We first considered computational scalability[@stephen]. 
+We found that `mi` was unusable when the number of variables was more than 18 or the number of observations more than 1,000; it is not suitable for large-scale data analysis.  
+
+`mice` is usable for data sets with large numbers of observations and moderate numbers of variables. It ran in 0.25-1s per observation on datasets with 18 observations and 100 to 10,000 observations, but in 10-20s per observation on datasets with 59 variables.  The ability to use large numbers of variables is important not only because the models of interest may include many variables, but because imputation will tend to be improved when additional variables are used.
+
+`missRanger` and `MIDAS`  were feasible even for quite large data sets, taking about 0.1s per observation with 59 variables and 10,000 observations. Both could be used with even larger numbers of variables or observations. `missForest` was slower, but still usable.
+
+## Imputation accuracy in healthcare settings
+
+We analysed three predictive models using the range of imputation models [@jiunn].  The first was a model for in-hospital mortality fitted to data from the US MIMIC-III intensive-care database. The second was a model for in-hospital  mortality fitted
+the NZ National Minimum Dataset, and the third was a model for non-cardiac mortality after surgery in New Zealand.
+
+Since `mice` is widely-used and accepted, we assumed it would give well-calibrated imputations on these datasets, and examined whether imputing using the machine-learning approaches gave similar results.   The results were comparable for the two neural network approaches.  
+
+In contrast, `missRanger` gave imputed values that were much more variable than those from `mice`, suggesting that it had failed to incorporate all the information in the data.  Excess variability in the predictions suggests that `missRanger` will be less successful in correcting bias, and will overestimate the uncertainty in the fitted model. 
+
+## Conclusion
+
+We have reservations about recommending `missRanger` because of its poorer accuracy in these three examples.  We have different reservations about the neural-network methods provided by `MIDAS`: the software was not in a sufficiently finished state to be relied on.
+
+It is likely that both random-forest and neural-network imputation engines will improve rapidly. `MIDAS` has already progressed from the version we evaluated, and has substantially better documentation of the code.  
+
+If there is a need to perform imputation in data sets too large for `mice` to be feasible, `missRanger` would be worth using at least as a sensitivity analysis for comparison to a complete-case analysis. 

@@ -1,3 +1,218 @@
-# Methods
+# Worked example {#worked}
 
-We describe our methods in this chapter.
+In this section we show how missing data can be described and imputed. The basic steps are
+
+1. Explore the structure of the missing data
+2. Run imputation software to produce a collection of possible complete datasets
+3. Run the analysis on each data set
+4. Combine the results
+
+We will use R packages `mice` and `missRanger` to perform imputations,  `mitools` [@mitools] to combine results, and `naniar` [@naniar] to explore missing data structure. 
+
+## Example: Youth Risk Behavior Survey
+
+From the Centers for Disease Control and Prevention (https://www.cdc.gov/healthyyouth/data/yrbs/index.htm)
+
+>The Youth Risk Behavior Surveillance System (YRBSS) monitors six categories of health-related behaviors that contribute to the leading causes of death and disability among youth and adults, including—
+
+>- Behaviors that contribute to unintentional injuries and violence
+>- Sexual behaviors related to unintended pregnancy and sexually transmitted diseases, including HIV infection
+>- Alcohol and other drug use
+>- Tobacco use
+>- Unhealthy dietary behaviors
+>- Inadequate physical activity
+
+>YRBSS also measures the prevalence of obesity and asthma and other health-related behaviors plus sexual identity and sex of sexual contacts.
+
+>YRBSS includes a national school-based survey conducted by CDC and state, territorial, tribal, and local surveys conducted by state, territorial, and local education and health agencies and tribal governments.
+
+
+We will fit a predictive model for asthma using age, exercise, height, weight, and smoking. The asthma variable is coded `1=Yes`, `2=No`, `3=Don't know`
+
+```{r message=FALSE, cache=TRUE}
+library(dplyr)
+library(purrr)
+load("Data/yrbs15.rda")
+dim(yrbs15)
+yrbs15 <- select(yrbs15, q1, sex=q2, grade=q3, height=q6, weight=q7,
+                 bullying=q23, ebullying=q25, wtperceived=q69, wtgoal=q70, exercise=q80,
+                 asthma=q87,sleep=q88, english=q99, smoke=qntob2, tobacco=qntob4, qnfr1,
+                 qnfr3, qnveg1, qnveg3, qnsoda1, qnsoda3,overwt=qnowt, raceeth) %>%
+          map_df(as.numeric) %>%
+          mutate(age=q1+11, has_asthma=ifelse(asthma==3, NA, asthma==1)) %>%
+          mutate(raceeth=factor(raceeth)) %>%
+          select(-q1, -asthma)
+dim(yrbs15)
+```
+
+ First, consider just the complete cases
+```{r}
+cc_model<-glm(has_asthma~sex*age+I(weight/height^2)+exercise+smoke,
+            data=yrbs15, family=binomial,na.action=na.exclude)
+summary(cc_model)
+cc_pred<-predict(cc_model,type="response")
+```
+
+The output says there are 3891 observations deleted because of missing data. 
+
+First, look at missing data patterns
+
+```{r}
+library(visdat)
+library(naniar)
+vis_dat(yrbs15)
+```
+
+We can see there is both sporadic missingness and some large blocks of missing values that indicate poor compliance at particular survey sites.
+
+
+An UpSet plot shows the combinations more clearly. There are many people missing the `has_asthma` variable;  there are some who have the asthma measurement but are missing data on height and weight, sleep, smoking or exercise.
+
+```{r}
+gg_miss_upset(yrbs15[,c("has_asthma","sex","age","height","weight","exercise","smoke")],nsets=7)
+```
+
+The other variables in our reduced data set measure bullying, diet, perception of the teens own weight, diet, and facility with English.  The dietary variables are less often missing than height and weight, and in different people, so they could be valuable. Sleep and bullying are also rarely missing
+
+```{r fig.height=10}
+gg_miss_upset(yrbs15,nsets=23)
+```
+
+## Imputation with `mice`
+
+First, we will use `mice`.
+
+The function `mice()` creates imputations.  We will use $M=20$ complete data sets.  The literature varies on how large $M$ should be, largely driven by improvements in computing over the three decades that multiple imputation has been in use. Where computationally feasible, I would recommend at least 20, and up to 100; if necessary, it may be possible to get away with as few as $M=5$. 
+
+```{r cache=TRUE}
+library(mice)
+system.time(
+  mice_imputations <- mice(yrbs15, m=20, maxit=5, printFlag=FALSE)
+)
+```
+
+We can now perform analyses with the 20 imputed data sets using the `with()` function and pool them using the `pool()` function
+
+```{r}
+mice_models <- with(mice_imputations, 
+                    glm(has_asthma~sex*age+I(weight/height^2)+exercise+smoke,
+                       family=binomial,na.action=na.exclude)
+                    )
+pool(mice_models)$pooled[,c("estimate","fmi")]
+summary(pool(mice_models))
+```
+
+The imputation has been very successful: the fraction of missing information (`fmi`) about the parameters is small. We can now use the pooled regression coefficients to make predictions, and the pooled standard errors to evaluate the uncertainties in those predictions.  The coefficient of body mass index has stayed about the same, but those for `sex`, `age`, and `smoke` have changed noticeably, and the predictions will be impacted.
+
+Alternatively, we could extract predicted values from each model and pool these. Unless we have a strong belief in the accuracy of the predictive model, it should be better (though less convenient) to postpone the pooling as long as possible
+
+```{r}
+mice_datasets<-complete(mice_imputations, action="all")
+
+mice_predictions<-lapply(mice_datasets, 
+                    function(dataset){
+                      predict(glm(has_asthma~sex*age+I(weight/height^2)+exercise+smoke,
+                       family=binomial,data=dataset), type="response")
+                    })
+
+length(mice_predictions)
+length(mice_predictions[[1]])
+```
+
+Here we look at the relationship between the first two versions of the predicted value.  Observations with complete data are in red, and those with missing data are in green
+
+```{r fig.height=5, fig.width=5}
+plot(mice_predictions[[1]],mice_predictions[[2]],
+     col=ifelse(is.na(cc_pred),"forestgreen","darkred"),
+     pch=19, xlab="Risk of asthma (imp 1)",ylab="Risk of asthma (imp 2)")
+abline(0,1)
+```
+
+The green points are spread out around the diagonal line, reflecting that the two imputations have different values for the missing data.  The red points are clustered fairly closely around the diagonal line; differences between the two predictions for these points reflect differences in the fitted model.
+
+Our best estimate of the predictions is the average across all the impute values. We compare this to the predictions for the complete-case analysis
+
+```{r}
+library(ggplot2)
+mice_final_pred<-Reduce(`+`,mice_predictions)/length(mice_predictions)
+
+summary(mice_final_pred)
+summary(cc_pred)
+
+ggplot(data.frame(cc=cc_pred,mice=mice_final_pred), aes(x=cc,y=mice))+
+  geom_miss_point()+
+  xlab("Complete-case predictions")+ylab("mice predictions")+
+  geom_abline(intercept=0,slope=1)
+
+```
+
+There are two benefits from imputation visible here. First, and most dramatically, the red observations do not have a prediction in complete-case data; the predictive model fails. Second, the predictions from the imputed data are higher at the high end and lower at the low end; there is a small amount of systematic bias
+
+
+## Imputation with `missRanger`
+
+We need to make one data change to use `missRanger`: it does not allow logical (TRUE/FALSE) variables, so `has_asthma` must be recoded as `0/1`.  There is also a change in how the imputations are created: `missRanger` only does one imputation each time it is invoked, so we use `replicate()` to invoke it $M$ times. The `pmm.k` option controls the use of predictive mean matching (see \@ref{pmm}), which ensures that imputed values only take on values that are already seen in the data
+
+```{r cache=TRUE}
+library(missRanger)
+yrbs15$has_asthma<-as.integer(yrbs15$has_asthma)
+system.time(
+  forest_imputations <- replicate(20, {
+        missRanger(yrbs15, maxiter=5, pmm.k=5)
+        },simplify = FALSE)
+)
+```
+
+The output from this code is like the output from `complete()` in `mice`, a list of data sets.  We can combine them using imputation-combining functions from the `mitools` package
+
+```{r}
+library(mitools)
+ranger_imps<-imputationList(forest_imputations)
+ranger_models<- with(ranger_imps, 
+                    glm(has_asthma~sex*age+I(weight/height^2)+exercise+smoke,
+                       family=binomial,na.action=na.exclude)
+                    )
+summary(MIcombine(ranger_models))
+```
+
+
+Next, we find the predicted values for each set of imputations and average the multiple predictions for each variable. Again, the red indicates predicted values where there is no missing data, so that the differences are due to differences in the trained model; the green indicates differences where there is missing data and shows the uncertainty in individual imputations.
+
+The scatter of green points is less structured than with `mice`, because the predictions are averaged over many trees. The lack of structure shows that many variables have contributed small amounts to predicting the missing values.  Whether this is good or bad depends on the setting. If there is actually strong predictive information in just a few variables it's bad; if the informative really is diffusely spread across many variables it's good.  In this case I think it's bad.
+
+```{r fig.height=5, fig.width=5}
+ranger_predictions<-with(ranger_imps,{
+    predict(glm(has_asthma~sex*age+I(weight/height^2)+exercise+smoke,
+                       family=binomial), type="response")
+})
+
+plot(ranger_predictions[[1]],ranger_predictions[[2]],
+     col=ifelse(is.na(cc_pred),"forestgreen","darkred"),
+     pch=19, xlab="Risk of asthma (imp 1)",ylab="Risk of asthma (imp 2)")
+abline(0,1)
+```
+
+The plot comparing complete-case to `missRanger` predictions shows a different pattern from that for `mice`.  We now are seeing lower predictions at the high end, not higher. 
+
+```{r}
+library(ggplot2)
+ranger_final_pred<-Reduce(`+`,ranger_predictions)/length(ranger_predictions)
+
+summary(ranger_final_pred)
+summary(cc_pred)
+
+ggplot(data.frame(cc=cc_pred,ranger=ranger_final_pred), aes(x=cc,y=ranger))+
+  geom_miss_point()+
+  xlab("Complete-case predictions")+ylab("missRanger predictions")+
+  geom_abline(intercept=0,slope=1)
+
+```
+
+Comparing the predictions from `missRanger` and `mice` confirms that `missRanger` is predicting lower values at the high end, and shows considerable scatter.  Because `mice` has been more thoroughly tested, and because we expect the information to come mostly from a small number of variables, we would trust `mice` more here. It's still useful to know how they compare. 
+
+```{r}
+ggplot(data.frame(mice=mice_final_pred,ranger=ranger_final_pred,cc=!is.na(cc_pred)), aes(x=mice,y=ranger,col=cc))+
+  geom_point()+
+  xlab("mice predictions")+ylab("missRanger predictions")+
+  geom_abline(intercept=0,slope=1)
+```

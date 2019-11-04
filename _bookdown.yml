@@ -1,5 +1,14 @@
+title: "How and Why to use Multiple Imputation"
 book_filename: "bookdown-demo"
+date: November 15, 2019
+new_session: yes
+author: "Thomas Lumley and Jiunn Howe Lee and Stephen Connor"
 language:
   ui:
     chapter_name: "Chapter "
 delete_merged_file: true
+output:
+  bookdown::tufte_html_book:
+    toc: yes
+    css: toc.css
+  tufte::tufte_handout:

@@ -1,7 +1,47 @@
-# Applications
+# Some technical details
 
-Some _significant_ applications are demonstrated in this chapter.
+In this section $M$ is the number of imputed datasets, which are indexed by $m=1,\dots,M$.  
 
-## Example one
+## Formulas for combining multiply-imputed datasets
 
-## Example two
+Suppose we are interested in estimating a parameter $\beta$. Given $M$ coefficient estimates $\hat\beta_1^*,\ldots\hat\beta_M^*$ based on a collection of imputed datasets, the overall estimate is 
+$$\bar\beta = \frac{1}{M}\sum_{m=1}^M \hat\beta_m^*$$
+
+If in addition we have $M$ variance estimates $\hat\sigma^2_1,\dots,\hat\sigma^2_M$ of the variance of $\hat\beta_1,\dots,\hat\beta_M$ the estimated variance is
+
+$$\bar \sigma^2 = \frac{1}{M}\sum_{m=1}^M \hat\sigma_m^2+ \frac{1}{M-1}\sum_{m=1}^M\left(\hat\beta_m^*-\bar\beta\right)^2$$
+The first term in this equation estimates the variance we would have with complete data; the second term is the additional variance due to having missing data.   If the missing data could be imputed perfectly, the second term would be zero; if the missing data cannot be predicted at all, the second term will be large.
+
+The *fraction of missing information* estimates how much of the information about $\beta$ has been lost due to missing data.  This can be substantially smaller than the proportion of cases with missing information, because imputation makes use of the partial information present in incomplete observations.  Heuristically, the fraction of missing information just the second term in the variance formula divided by the whole variance; in practice we use a more complicated formula [@rubin-rules] that behaves better in small data sets.
+
+
+## Chained equations
+
+An obvious difficulty in creating a model to predict missing values is that there will be missing values in more than one variable. Where do you start?  The chained-equations strategy is to start with random noise and to iterate: predict the first variable from the rest, the second variable from the new values of the first and the old values of the rest, the third from the new values of the first two and the old values of the rest, and so on through all the variable and for many iterations.
+
+This iterative process is a *Markov chain*, a class of random processes that is very thoroughly studied in statistics and probability.  Under fairly weak assumptions (basically, that it doesn't get stuck in a loop) a Markov chain will eventually forget its starting values and sample randomly from a unique *stationary distribution* defined by the models predicting each variable from all the others.
+
+Both `mice` and the random-forest techniques use chained equations to construct imputations. The random-forest packages construct $M$ separate Markov chains; `mice` runs one Markov chain long enough to extract $M$ datasets from it. 
+
+## Predictive Mean Matching {#pmm}
+
+One of the complications with imputed data is that the imputation model may not know about all the constraints on the true variable. Age may be recorded to the nearest year but be imputed as a continuous variable. Salary will be non-negative in the observed data but might be imputed as negative. There are two reasons this can be problematic. First, it is bad for face validity. Second, while it's typically not a problem for traditional statistical analyses, it presents concern for deep neural networks, which are known for using unintended data features to distort predictions. 
+
+Predictive mean matching is a way to ensure that imputations do not introduce imputed values that are not present anywhere in the original data for the variable. First, predicted mean values are generated for every observation, missing or not.  For each missing observation, we find the observed value with the closest predicted mean (or choose randomly from the few with the closest means). We use this observed value as the imputed value. 
+
+## Random forests
+
+Classification and regression tree predictors work by splitting the data into two groups, then splitting each of those into two groups, and so on recursively.  Single trees are usually not very good predictive models, but collections of trees can be. 
+
+A random forest predictive model fits a large collection of trees, with each tree using a randomly chosen subset of variables.  Each tree gives a prediction, and the prediction from the forest is the average (for a continuous variable) or a majority vote (for a categorical variable).
+
+Random forests give good-quality 'black box' predictions. They can straightforwardly be implemented to run on large data sets and take advantage of parallel computing, since each tree is constructed independently and each split results in a smaller data set. 
+
+## Autoencoders
+
+All the imputation approaches express the data as a model plus noise, estimating the model part and sampling the noise at random.  The previous approaches create the model one variable at a time.  Autoencoders, by contrast, create a multivariate model for combinations of the variables, and sample the noise for combinations of the variables. 
+
+The idea of an autoencoder is to have a deep neural network with a narrow bottleneck in the middle layer and with (mostly) symmetric layers before and after. The low-dimensional bottleneck layer represents the 'model' part of the data; the layers before the bottleneck learn the encoding down to the low-dimensional representation; the layers after the bottleneck expand to the full distribution. 
+
+If the neural network used linear transformations rather than the nonlinear transformations it actually uses, an autoencoder would perform principal components analysis, with the first few principal components used as the model and the remainder treated as noise. 
+

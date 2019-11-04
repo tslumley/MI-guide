@@ -1,21 +1,22 @@
-# Introduction {#intro}
+# Why impute? {#intro}
 
-You can label chapter and section titles using `{#label}` after them, e.g., we can reference Chapter \@ref(intro). If you do not manually label them, there will be automatic labels anyway, e.g., Chapter \@ref(methods).
+Missing data is ubiquitous in statistics. Even theoretically-complete administrative data such as the NMDS for hospital admissions will have some fields not filled in.  Additional missing data will be created when impossible values are removed in data cleaning. 
 
-Figures and tables with captions will be placed in `figure` and `table` environments, respectively.
+Traditionally, records with missing observations have simply been omitted from data analysis and model fitting. This 'complete-case' approach to analysis is automated in all major statistical software; it was the only straightforward approach available when the packages were created. 
 
-```{r nice-fig, fig.cap='Here is a nice figure!', out.width='80%', fig.asp=.75, fig.align='center'}
-par(mar = c(4, 4, .1, .1))
-plot(pressure, type = 'b', pch = 19)
-```
+Complete-case analysis, however, can be substantially biased; people with missing data are not a representative sample of the population.  For example, in the 2018 New Zealand Census[@EDQPinitial, table 4.8], 16% of those who responded to the question on 'Māori descent' indicated they did have Māori descent, but Stats New Zealand estimate that 48% of those who did not respond had Māori descent.  In healthcare settings, people who do not respond may be at systematically lower risk if measurements are made based on clinical need, or at systematically higher risk if missing data reflects poorer access to care or higher clinician workload.
 
-Reference a figure by its code chunk label with the `fig:` prefix, e.g., see Figure \@ref(fig:nice-fig). Similarly, you can reference tables generated from `knitr::kable()`, e.g., see Table \@ref(tab:nice-tab).
+There are two general and statistically principled ways of handling missing data.  The first is to use only the complete records, but to reweight them so that they represent the whole target population; this is analogous to direct standardisation for age in epidemiology. Reweighting is straightforward, but inefficient; there may be nearly-complete data on many people, and it is being ignored.  The second is imputation. 
 
-```{r nice-tab, tidy=FALSE}
-knitr::kable(
-  head(iris, 20), caption = 'Here is a nice table!',
-  booktabs = TRUE
-)
-```
+First, consider single imputation, which replaces each missing value by a single imputed value.  There are two approaches to single imputation: replacing a missing value by the *most likely true value*, and replacing by a *randomly chosen plausible value*, in both cases taking into account what else is known about the individual.  The first approach corrects some of the bias, but has a tendency to cause stereotyping.  Suppose, for example, that we are imputing current smoking status.  The most likely value, for almost any group of people in New Zealand, is 'non-smoker', because the smoking prevalence is well below 50%. However, imputing 'non-smoker' for *all* the missing values will lead to a downwards bias in smoking prevalence.  Similarly, imputing ethnicity by the most likely value will over-represent NZ Europeans, and imputing diabetes status by the most likely value will under-represent diabetes.  Imputing the most likely value is still a helpful strategy with small amounts of missing data, or where the values can be accurately predicted. 
 
-You can write citations, too. For example, we are using the **bookdown** package [@R-bookdown] in this sample book, which was built on top of R Markdown and **knitr** [@xie2015].
+The second single-imputation approach is widely used for census data; missing values are replaced by the observed value from some other individual, who is randomly chosen from a set of sufficiently close matches. Stochastic single imputation will preserve the distribution of each variable. For example, a missing smoking status will be imputed as smoking or non-smoking in proportion to the actual prevalence in matching individuals.  However, stochastic imputation tends to bias associations between variables and between individuals in a household. 
+
+All single-imputation methods suffer from the problem of 'making up data'. The data set ends up complete; there is no simple way to know how much of the statistical information in the data is real and how much was created from nothing. As long as only a few percent of data are imputed this isn't a problem, but if 10-20% is imputed the standard errors are likely to be too small and p-values are likely to overstate the evidence. 
+
+Multiple imputation[@rubin-mi] does allow for a valid assessment of evidence after imputation. Rather than being imputed only once, each missing value is replaced by a *representative sample of plausible values* to create a collection of plausible complete data sets. Each of these data sets is run through the same analysis, and the differences in results between the analyses tells us how much extra uncertainty can be attributed to the 'made-up' data. 
+
+Imputation will be most effective when there are variables available that predict being missing or predict the values of the missing variable, but that are not going to be included in the predictive model.  They might be excluded because they are not readily available in production use, or because they are not available until after the time when the prediction must be made, or because of face-validity or parsimony concerns.  If there are no variables available that are not already in the model, imputation is unlikely to be helpful. 
+
+Finally, it's important to note that imputation is not magic. It's reasonable to expect that missing-data bias will be reduced by multiple imputation, but the bias will only be completely removed if there are observed variables that can predict all the differences in missingness.  This is called the *Missing At Random* assumption; it is provably required for any method that completely removes missing-data bias, but is unlikely to be exactly true in practice. 
+
